@@ -1,7 +1,7 @@
 import sqlite3
 import uuid
 from flask import Flask, render_template, request, redirect, url_for, session, flash, g
-from flask_socketio import SocketIO, send
+from flask_socketio import SocketIO, send, join_room, emit
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
@@ -33,7 +33,10 @@ def init_db():
                 id TEXT PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
                 password TEXT NOT NULL,
-                bio TEXT
+                bio TEXT,
+                balance INTEGER DEFAULT 0,
+                role TEXT DEFAULT 'user',
+                status TEXT DEFAULT 'active'
             )
         """)
         # 상품 테이블 생성
@@ -43,7 +46,8 @@ def init_db():
                 title TEXT NOT NULL,
                 description TEXT NOT NULL,
                 price TEXT NOT NULL,
-                seller_id TEXT NOT NULL
+                seller_id TEXT NOT NULL,
+                status TEXT DEFAULT 'active'
             )
         """)
         # 신고 테이블 생성
@@ -53,6 +57,17 @@ def init_db():
                 reporter_id TEXT NOT NULL,
                 target_id TEXT NOT NULL,
                 reason TEXT NOT NULL
+            )
+        """)
+        
+        # 송금 테이블
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS transfer (
+                id TEXT PRIMARY KEY,
+                sender_id TEXT NOT NULL,
+                receiver_id TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
         db.commit()
@@ -204,6 +219,210 @@ def report():
 def handle_send_message_event(data):
     data['message_id'] = str(uuid.uuid4())
     send(data, broadcast=True)
+
+# 1:1 채팅: 특정 방에 메시지를 보내고 받기
+@socketio.on('join_room')
+def handle_join_room(data):
+    room = data['room']
+    join_room(room)
+    
+# 방에 메시지 보내기
+@socketio.on('send_private_message')
+def handle_private_message(data):
+    room = data['room']
+    message = data['message']
+    senderName = data['senderName']
+    emit('receive_message', {'message': message, 'senderName': senderName}, room=room)
+
+# 사용자 목록 조회
+@app.route('/users')
+def user_list():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute("SELECT id, username, bio FROM user")
+    users = cursor.fetchall()
+
+    return render_template('user_list.html', users=users)
+
+# 비밀번호 변경 기능
+@app.route('/profile/password', methods=['GET', 'POST'])
+def change_password():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute("SELECT * FROM user WHERE id = ?", (session['user_id'],))
+    user = cursor.fetchone()
+
+    if request.method == 'POST':
+        current_pw = request.form['current_password']
+        new_pw = request.form['new_password']
+        confirm_pw = request.form['confirm_password']
+
+        # 평문 비교 (현재는 해시가 아님)
+        if current_pw != user['password']:
+            flash('현재 비밀번호가 올바르지 않습니다.')
+            return redirect(url_for('change_password'))
+
+        if new_pw != confirm_pw:
+            flash('새 비밀번호가 일치하지 않습니다.')
+            return redirect(url_for('change_password'))
+
+        # 비밀번호 업데이트 (해시로 바꾸는 것이 좋음)
+        cursor.execute("UPDATE user SET password = ? WHERE id = ?", (new_pw, session['user_id']))
+        db.commit()
+        flash('비밀번호가 성공적으로 변경되었습니다.')
+        return redirect(url_for('profile'))
+
+    return render_template('change_password.html')
+
+# 내 상품 목록 조회
+@app.route('/my-products')
+def my_products():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute("SELECT * FROM product WHERE seller_id = ?", (session['user_id'],))
+    products = cursor.fetchall()
+
+    return render_template('my_products.html', products=products)
+
+
+# 상품 수정
+@app.route('/product/edit/<product_id>', methods=['GET', 'POST'])
+def edit_product(product_id):
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute("SELECT * FROM product WHERE id = ?", (product_id,))
+    product = cursor.fetchone()
+
+    if not product or product['seller_id'] != session['user_id']:
+        flash("상품을 수정할 권한이 없습니다.")
+        return redirect(url_for('my_products'))
+
+    if request.method == 'POST':
+        title = request.form['title']
+        description = request.form['description']
+        price = request.form['price']
+        cursor.execute("""
+            UPDATE product
+            SET title = ?, description = ?, price = ?
+            WHERE id = ?
+        """, (title, description, price, product_id))
+        db.commit()
+        flash("상품 정보가 수정되었습니다.")
+        return redirect(url_for('view_product', product_id=product_id))
+
+    return render_template('edit_product.html', product=product)
+
+# 상품 삭제
+@app.route('/product/delete/<product_id>', methods=['POST'])
+def delete_product(product_id):
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    db = get_db()
+    cursor = db.cursor()
+    cursor.execute("SELECT * FROM product WHERE id = ?", (product_id,))
+    product = cursor.fetchone()
+
+    if not product or product['seller_id'] != session['user_id']:
+        flash("상품을 삭제할 권한이 없습니다.")
+        return redirect(url_for('my_products'))
+
+    cursor.execute("DELETE FROM product WHERE id = ?", (product_id,))
+    db.commit()
+    flash("상품이 삭제되었습니다.")
+    return redirect(url_for('my_products'))
+
+# 1:1 채팅 기능
+@app.route('/chat/<target_id>')
+def chat(target_id):
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    db = get_db()
+    cursor = db.cursor()
+    # 대상 사용자 확인
+    cursor.execute("SELECT * FROM user WHERE id = ?", (target_id,))
+    target_user = cursor.fetchone()
+
+    if not target_user:
+        flash("대상 사용자를 찾을 수 없습니다.")
+        return redirect(url_for('user_list'))
+
+    cursor.execute("SELECT * FROM user WHERE id = ?", (session['user_id'],))
+    current_user = cursor.fetchone()
+
+    return render_template('chat.html', target_user=target_user, current_user=current_user)
+
+# 사용자간 송금 기능
+@app.route('/transfer', methods=['GET', 'POST'])
+def transfer():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    db = get_db()
+    cursor = db.cursor()
+
+    # 사용자 목록 조회
+    cursor.execute("SELECT id, username FROM user WHERE id != ?", (session['user_id'],))
+    users = cursor.fetchall()
+
+    if request.method == 'POST':
+        receiver_id = request.form['receiver_id']
+        amount = int(request.form['amount'])
+
+        # 현재 사용자 잔액 조회
+        cursor.execute("SELECT balance FROM user WHERE id = ?", (session['user_id'],))
+        sender_balance = cursor.fetchone()['balance']
+
+        if amount <= 0:
+            flash("0원 이상의 금액을 입력해주세요.")
+        elif amount > sender_balance:
+            flash("잔액이 부족합니다.")
+        else:
+            # 송금 처리
+            cursor.execute("UPDATE user SET balance = balance - ? WHERE id = ?", (amount, session['user_id']))
+            cursor.execute("UPDATE user SET balance = balance + ? WHERE id = ?", (amount, receiver_id))
+
+            # 기록 저장
+            transfer_id = str(uuid.uuid4())
+            cursor.execute("INSERT INTO transfer (id, sender_id, receiver_id, amount) VALUES (?, ?, ?, ?)",
+                           (transfer_id, session['user_id'], receiver_id, amount))
+            db.commit()
+            flash("송금이 완료되었습니다.")
+            return redirect(url_for('dashboard'))
+
+    return render_template('transfer.html', users=users)
+
+# 상품 검색
+@app.route('/search')
+def search():
+    query = request.args.get('q', '')
+
+    products = []
+    if query:
+        db = get_db()
+        cursor = db.cursor()
+        wildcard = f'%{query}%'
+        cursor.execute("""
+            SELECT * FROM product
+            WHERE (title LIKE ? OR description LIKE ?)
+              AND status = 'active'
+        """, (wildcard, wildcard))
+        products = cursor.fetchall()
+
+    return render_template('search_results.html', query=query, products=products)
 
 if __name__ == '__main__':
     init_db()  # 앱 컨텍스트 내에서 테이블 생성

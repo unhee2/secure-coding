@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}{{ target_user.username }}님과의 채팅{% endblock %}
+{% block content %}
+<h2>{{ target_user.username }}님과의 채팅</h2>
+<div id="chat-box" style="border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: scroll;">
+  <ul id="messages"></ul>
+</div>
+<input id="chat_input" type="text" placeholder="메시지를 입력하세요">
+<button onclick="sendMessage()">전송</button>
+
+<script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+<script>
+  var socket = io();
+  const senderId = "{{ current_user.id }}";
+  const receiverId = "{{ target_user.id }}";
+  const senderName = "{{ current_user.username }}";
+
+  socket.emit("join_room", { room: [senderId, receiverId].sort().join("-") });
+
+  socket.on("receive_message", function(data) {
+    const li = document.createElement("li");
+    li.textContent = data.senderName + ": " + data.message;
+    document.getElementById("messages").appendChild(li);
+  });
+
+  function sendMessage() {
+    const input = document.getElementById("chat_input");
+    const message = input.value;
+    if (message) {
+      socket.emit("send_private_message", {
+        room: [senderId, receiverId].sort().join("-"),
+        message: message,
+        senderName: senderName
+      });
+      input.value = "";
+    }
+  }
+</script>
+{% endblock %}
