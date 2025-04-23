@@ -2,9 +2,13 @@ name: secure_coding
 channels:
   - defaults
 dependencies:
-  - python=3.9
+  - python=3.12
   - pip
   - pip:
     - flask 
     - flask-socketio
     - flask-sqlalchemy
+    - flask-wtf
+    - flask-limiter
+    - flask-talisman
+    - werkzeug

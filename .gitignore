@@ -1,3 +1,4 @@
 *.db
 *.pptx
+create_admin.py
 __pycache__

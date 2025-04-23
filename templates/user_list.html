@@ -7,8 +7,9 @@
     <li>
       <strong>{{ user.username }}</strong> - {{ user.bio or "소개글 없음" }}
       {% if user.id != session['user_id'] %}
-    [<a href="{{ url_for('chat', target_id=user.id) }}">채팅하기</a>]
-  {% endif %}
+        [<a href="{{ url_for('chat', target_id=user.id) }}">채팅하기</a>]
+        [<a href="{{ url_for('transfer', target_id=user.id) }}">송금하기</a>]
+      {% endif %}
     </li>
   {% endfor %}
 </ul>

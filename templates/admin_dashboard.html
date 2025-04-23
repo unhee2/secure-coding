@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}관리자 대시보드{% endblock %}
+{% block content %}
+<h2>관리자 대시보드</h2>
+
+<h3>전체 사용자</h3>
+<table border="1">
+  <tr><th>ID</th><th>Username</th><th>Role</th><th>Status</th><th>조치</th></tr>
+  {% for user in users %}
+    <tr>
+      <td>{{ user.id }}</td>
+      <td>{{ user.username }}</td>
+      <td>{{ user.role }}</td>
+      <td>{{ user.status }}</td>
+      <td>
+        {% if user.status != 'blocked' and user.role != 'admin' %}
+          <form method="post" action="{{ url_for('block_user', target_id=user.id) }}">
+            {{csrf_token()}}
+            <button type="submit">정지</button>
+          </form>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+</table>
+
+<h3>전체 상품</h3>
+<table border="1">
+  <tr><th>제목</th><th>설명</th><th>가격</th><th>상태</th><th>조치</th></tr>
+  {% for product in products %}
+    <tr>
+      <td>{{ product.title }}</td>
+      <td>{{ product.description }}</td>
+      <td>{{ product.price }}</td>
+      <td>{{ product.status }}</td>
+      <td>
+        {% if product.status != 'deleted' %}
+        <form method="post" action="{{ url_for('delete_reported_product', target_id=product.id) }}">
+          <input type = "hidden" name = "csrf_token" value= "{{csrf_token()}}">
+          <button type="submit">삭제</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+</table>
+
+<h3>신고 내역</h3>
+<table border="1">
+  <tr><th>신고자</th><th>대상 ID</th><th>사유</th></tr>
+  {% for r in reports %}
+    <tr>
+      <td>{{ r.reporter_name }}</td>
+      <td>{{ r.target_id }}</td>
+      <td>{{ r.reason }}</td>
+    </tr>
+  {% endfor %}
+</table>
+
+{% endblock %}
